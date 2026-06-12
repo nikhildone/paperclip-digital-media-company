@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import postgres from "postgres";
+import postgres from "../packages/db/node_modules/postgres/src/index.js";
 
 function hashToken(token) {
   return createHash("sha256").update(token).digest("hex");
