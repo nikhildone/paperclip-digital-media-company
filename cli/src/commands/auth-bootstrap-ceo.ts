@@ -61,12 +61,19 @@ export async function bootstrapCeoInvite(opts: {
   const configPath = resolveConfigPath(opts.config);
   loadPaperclipEnvFile(configPath);
   const config = readConfig(configPath);
+  const envDeploymentMode =
+    process.env.PAPERCLIP_DEPLOYMENT_MODE ?? process.env.PAPERCLIP_MODE;
+  const isAuthenticatedDeployment =
+    config?.server.deploymentMode === "authenticated" ||
+    envDeploymentMode === "authenticated";
+
   if (!config) {
-    p.log.error(`No config found at ${configPath}. Run ${pc.cyan("paperclip onboard")} first.`);
-    return;
+    p.log.info(
+      `No config found at ${configPath}; using deployment environment variables for bootstrap.`,
+    );
   }
 
-  if (config.server.deploymentMode !== "authenticated") {
+  if (!isAuthenticatedDeployment) {
     p.log.info("Deployment mode is local_trusted. Bootstrap CEO invite is only required for authenticated mode.");
     return;
   }
