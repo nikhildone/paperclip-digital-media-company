@@ -48,7 +48,9 @@ FROM base AS build
 WORKDIR /app
 COPY --from=deps /app /app
 COPY . .
-RUN node scripts/patch-gemini-direct-api.mjs
+# NOTE: Gemini direct API patch script is intentionally not executed here.
+# The previous build hook broke Docker deploy due nested generated template strings.
+# Keep the script in the repo for future repair, but do not run it during production build.
 RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/plugin-sdk build
 RUN pnpm --filter @paperclipai/server build
