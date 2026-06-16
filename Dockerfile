@@ -3,7 +3,7 @@ FROM node:lts-trixie-slim AS base
 ARG USER_UID=1000
 ARG USER_GID=1000
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates gosu curl gh git wget ripgrep python3 \
+  && apt-get install -y --no-install-recommends ca-certificates gosu curl gh git wget ripgrep python3 ffmpeg espeak-ng fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable
 
@@ -51,6 +51,9 @@ COPY . .
 # Safe one-shot source patch: mounts the SINK DINK direct Gemini bridge route before TypeScript build.
 # This script is idempotent and does not execute any external API call.
 RUN node scripts/patch-sink-dink-gemini-bridge.mjs
+# Safe one-shot source patch: mounts the SINK DINK media output route before TypeScript build.
+# This script is idempotent and does not execute any external API call.
+RUN node scripts/patch-sink-dink-media-output.mjs
 # NOTE: Gemini direct API patch script is intentionally not executed here.
 # The previous build hook broke Docker deploy due nested generated template strings.
 # Keep the script in the repo for future repair, but do not run it during production build.
@@ -66,7 +69,7 @@ WORKDIR /app
 COPY --chown=node:node --from=build /app /app
 RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai @google/gemini-cli@latest \
   && apt-get update \
-  && apt-get install -y --no-install-recommends openssh-client jq \
+  && apt-get install -y --no-install-recommends openssh-client jq ffmpeg espeak-ng fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /paperclip \
   && chown node:node /paperclip
