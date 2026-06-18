@@ -25,3 +25,7 @@ if (!source.includes(mountLine)) {
 
 writeFileSync(appPath, source, "utf8");
 console.log("Mounted SINK DINK controlled agent workflow route in app.ts");
+
+// Keep SINK/DINK production generation API-only. This import is intentionally
+// chained from an existing Docker build patch hook to avoid another Dockerfile edit.
+await import("./patch-sink-dink-strict-api-only.mjs");
