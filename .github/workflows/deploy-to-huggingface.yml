@@ -8,14 +8,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo with full history
+      - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Prepare Space README
+      - name: Install Hugging Face uploader
         run: |
-          cat > README.md <<'EOF'
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade huggingface_hub hf_xet
+
+      - name: Prepare Space upload folder
+        run: |
+          rm -rf hf_space_upload
+          mkdir -p hf_space_upload
+          cp -R Dockerfile package.json package-lock.json server scripts hf_space_upload/
+          if [ -d client ]; then cp -R client hf_space_upload/; fi
+          if [ -d shared ]; then cp -R shared hf_space_upload/; fi
+          cat > hf_space_upload/README.md <<'EOF'
           ---
           title: Paperclip AI Company
           emoji: 🧠
@@ -26,13 +34,29 @@ jobs:
           ---
           EOF
 
-      - name: Push to Hugging Face Space
+      - name: Upload folder to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE: ${{ secrets.HF_SPACE }}
         run: |
-          git config --global user.email "github-actions@github.com"
-          git config --global user.name "github-actions"
-          git remote remove hf || true
-          git remote add hf https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}
-          git push --force hf HEAD:main
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          token = os.environ.get("HF_TOKEN")
+          repo_id = os.environ.get("HF_SPACE")
+          if not token:
+              raise SystemExit("Missing GitHub secret: HF_TOKEN")
+          if not repo_id:
+              raise SystemExit("Missing GitHub secret: HF_SPACE")
+
+          api = HfApi(token=token)
+          api.upload_folder(
+              folder_path="hf_space_upload",
+              repo_id=repo_id,
+              repo_type="space",
+              delete_patterns=["*"],
+              commit_message="Deploy Paperclip control room from GitHub Actions",
+          )
+          print(f"Uploaded Paperclip Space files to {repo_id}")
+          PY
