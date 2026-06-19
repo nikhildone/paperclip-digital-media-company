@@ -1,0 +1,35 @@
+name: Deploy Paperclip to Hugging Face
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Prepare Space README
+        run: |
+          cat > README.md <<'EOF'
+          ---
+          title: Paperclip AI Company
+          emoji: 🧠
+          colorFrom: blue
+          colorTo: purple
+          sdk: docker
+          app_port: 8080
+          ---
+          EOF
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ secrets.HF_SPACE }}
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
+          git remote add hf https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}
+          git push --force hf HEAD:main
