@@ -3,6 +3,7 @@ import { ArrowLeft, RadioTower } from "lucide-react";
 import { Link } from "@/lib/router";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { EmptyState } from "../components/EmptyState";
+import { SinkDinkCeoControl } from "../components/SinkDinkCeoControl";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 
@@ -21,15 +22,20 @@ export function DashboardLive() {
 
   if (!selectedCompanyId) {
     return (
-      <EmptyState
-        icon={RadioTower}
-        message={companies.length === 0 ? "Create a company to view live runs." : "Select a company to view live runs."}
-      />
+      <div className="space-y-5">
+        <SinkDinkCeoControl />
+        <EmptyState
+          icon={RadioTower}
+          message={companies.length === 0 ? "Create a company to view classic live runs. SINK-DINK CEO control is ready above." : "Select a company to view classic live runs. SINK-DINK CEO control is ready above."}
+        />
+      </div>
     );
   }
 
   return (
     <div className="space-y-5">
+      <SinkDinkCeoControl />
+
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <Link
