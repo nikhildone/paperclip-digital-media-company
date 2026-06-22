@@ -93,6 +93,17 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV NODE_ENV=production \
     SERVER_HOST=0.0.0.0 \
+    HOST=0.0.0.0 \
+    PORT=8080 \
+    SERVE_UI=true \
+    PAPERCLIP_BIND=public \
+    PAPERCLIP_DEPLOYMENT_MODE=authenticated \
+    PAPERCLIP_DEPLOYMENT_EXPOSURE=public \
+    PAPERCLIP_MIGRATION_AUTO_APPLY=true \
+    HEARTBEAT_SCHEDULER_ENABLED=false \
+    PAPERCLIP_DB_BACKUP_ENABLED=false \
+    PAPERCLIP_FAST_START=true \
+    PAPERCLIP_SECRETS_STRICT_MODE=false \
     PATH="/app/cli/bin:/app/node_modules/.bin:${PATH}"
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 USER node
