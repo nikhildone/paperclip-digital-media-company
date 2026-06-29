@@ -1,4 +1,4 @@
-name: Deploy to Hugging Face Space
+name: Consistent CI and Deploy to Hugging Face Space
 
 on:
   push:
@@ -7,9 +7,86 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: hf-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  deploy:
+  consistency-check:
+    name: Repo consistency check
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Hugging Face README metadata
+        run: |
+          test -f README.md
+          grep -q "sdk: docker" README.md
+          grep -q "app_port: 7860" README.md
+          echo "README HF Docker metadata OK"
+
+      - name: Check Dockerfile HF port
+        run: |
+          test -f Dockerfile
+          grep -q "PORT=7860" Dockerfile
+          grep -q "EXPOSE 7860" Dockerfile
+          echo "Dockerfile HF port OK"
+
+      - name: Show workflow files
+        run: |
+          echo "Available workflows:"
+          find .github/workflows -maxdepth 1 -type f -print | sort || true
+
+      - name: Important workflow consistency notice
+        run: |
+          echo "These are CI/release workflow categories, not HF runtime files:"
+          echo "- agent runtime images"
+          echo "- commit/paperclip PR review"
+          echo "- docker"
+          echo "- e2e tests"
+          echo "- PR checks"
+          echo "- refresh lockfile"
+          echo "- release"
+          echo "- release smoke"
+          echo ""
+          echo "Final HF deploy will upload repo source including .github workflows."
+
+  lockfile-check:
+    name: Refresh lockfile / install check
+    runs-on: ubuntu-latest
+    needs: consistency-check
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies with frozen lockfile
+        run: pnpm install --frozen-lockfile
+
+  docker-build-check:
+    name: Docker build check
+    runs-on: ubuntu-latest
+    needs: lockfile-check
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t paperclip-hf-check .
+
+  deploy-to-huggingface:
+    name: Upload full repo to Hugging Face Space
+    runs-on: ubuntu-latest
+    needs:
+      - consistency-check
+      - lockfile-check
+      - docker-build-check
 
     steps:
       - name: Checkout repository
@@ -41,7 +118,6 @@ jobs:
               path_in_repo=".",
               ignore_patterns=[
                   ".git/*",
-                  ".github/*",
                   "node_modules/*",
                   ".next/*",
                   "dist/*",
@@ -52,5 +128,5 @@ jobs:
               ],
           )
 
-          print("Deploy uploaded to Hugging Face Space successfully")
+          print("Full repository uploaded to Hugging Face Space successfully")
           PY
