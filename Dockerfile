@@ -62,7 +62,7 @@ WORKDIR /app
 COPY --chown=node:node --from=build /app /app
 RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai @google/gemini-cli@latest \
   && apt-get update \
-  && apt-get install -y --no-install-recommends openssh-client jq \
+  && apt-get install -y --no-install-recommends openssh-client jq curl \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /paperclip \
   && chown node:node /paperclip
@@ -73,7 +73,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENV NODE_ENV=production \
   HOME=/paperclip \
   HOST=0.0.0.0 \
-  PORT=3100 \
+  PORT=7860 \
   SERVE_UI=true \
   PAPERCLIP_HOME=/paperclip \
   PAPERCLIP_INSTANCE_ID=default \
@@ -85,7 +85,10 @@ ENV NODE_ENV=production \
   OPENCODE_ALLOW_ALL_MODELS=true \
   GEMINI_SANDBOX=false
 
-EXPOSE 3100
+EXPOSE 7860
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:${PORT}/api/health || exit 1
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "--import", "./server/node_modules/tsx/dist/loader.mjs", "server/dist/index.js"]
