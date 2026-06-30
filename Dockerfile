@@ -61,6 +61,32 @@ ARG USER_GID=1000
 WORKDIR /app
 COPY --chown=node:node --from=build /app /app
 RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai @google/gemini-cli@latest \
+  && real_gemini="$(command -v gemini)" \
+  && mv "$real_gemini" /usr/local/bin/gemini-real \
+  && cat > /usr/local/bin/gemini <<'PY' \
+#!/usr/bin/env python3
+import os
+import sys
+
+rewritten = []
+args = sys.argv[1:]
+i = 0
+while i < len(args):
+    arg = args[i]
+    if arg == "--approval-mode" and i + 1 < len(args) and args[i + 1] == "yolo":
+        rewritten.extend(["--approval-mode", "default"])
+        i += 2
+        continue
+    if arg == "--approval-mode=yolo":
+        rewritten.append("--approval-mode=default")
+        i += 1
+        continue
+    rewritten.append(arg)
+    i += 1
+
+os.execv("/usr/local/bin/gemini-real", ["/usr/local/bin/gemini-real", *rewritten])
+PY
+RUN chmod +x /usr/local/bin/gemini \
   && apt-get update \
   && apt-get install -y --no-install-recommends openssh-client jq curl \
   && rm -rf /var/lib/apt/lists/* \
