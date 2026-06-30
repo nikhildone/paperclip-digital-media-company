@@ -62,8 +62,10 @@ WORKDIR /app
 COPY --chown=node:node --from=build /app /app
 RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai @google/gemini-cli@latest \
   && real_gemini="$(command -v gemini)" \
-  && mv "$real_gemini" /usr/local/bin/gemini-real \
-  && cat > /usr/local/bin/gemini <<'PY' \
+  && mv "$real_gemini" /usr/local/bin/gemini-real
+
+RUN <<'EOF'
+cat > /usr/local/bin/gemini <<'PY'
 #!/usr/bin/env python3
 import os
 import sys
@@ -86,8 +88,10 @@ while i < len(args):
 
 os.execv("/usr/local/bin/gemini-real", ["/usr/local/bin/gemini-real", *rewritten])
 PY
-RUN chmod +x /usr/local/bin/gemini \
-  && apt-get update \
+chmod +x /usr/local/bin/gemini
+EOF
+
+RUN apt-get update \
   && apt-get install -y --no-install-recommends openssh-client jq curl \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /paperclip \
