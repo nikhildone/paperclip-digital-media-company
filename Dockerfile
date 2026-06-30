@@ -70,23 +70,48 @@ cat > /usr/local/bin/gemini <<'PY'
 import os
 import sys
 
+valid_approval_modes = {"default", "auto_edit", "plan", "yolo"}
+approval_mode = "default"
 rewritten = []
 args = sys.argv[1:]
 i = 0
+
+os.environ["GEMINI_SANDBOX"] = "false"
+
 while i < len(args):
     arg = args[i]
-    if arg == "--approval-mode" and i + 1 < len(args) and args[i + 1] == "yolo":
-        rewritten.extend(["--approval-mode", "default"])
+
+    if arg == "--approval-mode":
+        value = args[i + 1] if i + 1 < len(args) else ""
+        if value in valid_approval_modes and value != "yolo":
+            approval_mode = value
+        else:
+            approval_mode = "default"
         i += 2
         continue
-    if arg == "--approval-mode=yolo":
-        rewritten.append("--approval-mode=default")
+
+    if arg.startswith("--approval-mode="):
+        value = arg.split("=", 1)[1]
+        if value in valid_approval_modes and value != "yolo":
+            approval_mode = value
+        else:
+            approval_mode = "default"
         i += 1
         continue
+
+    if arg == "--sandbox":
+        i += 1
+        continue
+
+    if arg.startswith("--sandbox"):
+        i += 1
+        continue
+
     rewritten.append(arg)
     i += 1
 
-os.execv("/usr/local/bin/gemini-real", ["/usr/local/bin/gemini-real", *rewritten])
+final_args = ["--approval-mode", approval_mode, "--sandbox=none", *rewritten]
+os.execv("/usr/local/bin/gemini-real", ["/usr/local/bin/gemini-real", *final_args])
 PY
 chmod +x /usr/local/bin/gemini
 EOF
