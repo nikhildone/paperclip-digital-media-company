@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { dashboardService } from "../services/dashboard.js";
 import { assertCompanyAccess } from "./authz.js";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { agents } from "@paperclipai/db";
 
 export function dashboardRoutes(db: Db) {
@@ -25,28 +25,13 @@ export function dashboardRoutes(db: Db) {
       const companyId = req.params.companyId as string;
       assertCompanyAccess(req, companyId);
 
-      // Fetch all agents for this company, excluding terminated and pending_approval
-      const agentRows = await db
-        .select()
-        .from(agents)
-        .where(
-          and(
-            eq(agents.companyId, companyId),
-            db.query(agents).where(
-              and(
-                eq(agents.status, "terminated"),
-                eq(agents.status, "pending_approval")
-              )
-            ).noop()
-          )
-        );
-
-      // Better query: fetch all and filter in memory
+      // Fetch all agents for this company
       const allAgents = await db
         .select()
         .from(agents)
         .where(eq(agents.companyId, companyId));
 
+      // Filter out terminated and pending_approval agents
       const activeAgents = allAgents.filter(
         (a) => a.status !== "terminated" && a.status !== "pending_approval"
       );
@@ -69,6 +54,71 @@ export function dashboardRoutes(db: Db) {
   });
 
   /**
+   * Helper function to determine prompt based on agent role/name/title
+   */
+  function getAgentPrompt(agent: typeof agents.$inferSelect): string {
+    const role = agent.role.toLowerCase();
+    const name = (agent.name || "").toLowerCase();
+    const title = (agent.title || "").toLowerCase();
+
+    // Match based on role, name, or title
+    if (role === "ceo" || name.includes("ceo") || title.includes("ceo")) {
+      return "You are the CEO. Coordinate and merge work from all team members into a cohesive upload-ready Instagram content pack.";
+    }
+    if (
+      role === "researcher" ||
+      name.includes("research") ||
+      title.includes("research")
+    ) {
+      return "You are the Research role. Create an audience pain map and identify trend angles for the content.";
+    }
+    if (role === "strategy" || name.includes("strategy") || title.includes("strategy")) {
+      return "You are the Strategy role. Create content pillars and positioning strategy.";
+    }
+    if (role === "content" || name.includes("content") || title.includes("content")) {
+      return "You are the Content role. Create hooks, scripts, captions, CTAs, and relevant hashtags.";
+    }
+    if (
+      role === "media_production" ||
+      role.includes("media") ||
+      name.includes("media") ||
+      name.includes("production") ||
+      title.includes("media") ||
+      title.includes("production")
+    ) {
+      return "You are the Media Production role. Create scene direction, on-screen text overlays, and thumbnail specifications.";
+    }
+    if (role === "qa" || name.includes("qa") || title.includes("qa")) {
+      return "You are the QA role. Provide brand safety assessment and upload-readiness score.";
+    }
+    if (
+      role === "automation" ||
+      name.includes("automation") ||
+      title.includes("automation")
+    ) {
+      return "You are the Automation role. Document repeatable workflow, dashboard notes, and API integration points.";
+    }
+    if (role === "memory" || name.includes("memory") || title.includes("memory")) {
+      return "You are the Memory role. Create reusable memory templates, content backlog, and reference materials.";
+    }
+    if (role === "growth" || name.includes("growth") || title.includes("growth")) {
+      return "You are the Growth role. Define growth loops, CTAs, monetization strategy, and page positioning.";
+    }
+    if (role === "cmo" || name.includes("cmo") || title.includes("cmo")) {
+      return "You are the CMO. Create comprehensive marketing and content strategy with brand positioning.";
+    }
+    if (role === "designer" || name.includes("designer") || title.includes("designer")) {
+      return "You are the Designer. Create visual assets, layouts, and design specifications for Instagram content.";
+    }
+    if (role === "engineer" || name.includes("engineer") || title.includes("engineer")) {
+      return "You are the Engineer. Create technical integration points and API specifications for content delivery.";
+    }
+
+    // Default fallback
+    return "You are a team member of SINK & DINK India AI Media Organisation. Create role-specific work for upload-ready Instagram content packs. Provide practical, actionable output.";
+  }
+
+  /**
    * POST /companies/:companyId/sink-dink/production/start
    * Starts production agent runs using Google Gemini REST API directly.
    * Returns batch results with outputs from each agent.
@@ -84,12 +134,13 @@ export function dashboardRoutes(db: Db) {
         return res.status(500).json({ error: "API key not configured" });
       }
 
-      // Fetch all agents for this company, excluding terminated and pending_approval
+      // Fetch all agents for this company
       const allAgents = await db
         .select()
         .from(agents)
         .where(eq(agents.companyId, companyId));
 
+      // Filter out terminated and pending_approval agents
       const activeAgents = allAgents.filter(
         (a) => a.status !== "terminated" && a.status !== "pending_approval"
       );
@@ -119,29 +170,8 @@ export function dashboardRoutes(db: Db) {
       // Helper function to run a single agent
       const runAgent = async (agent: typeof agents.$inferSelect) => {
         try {
-          // Build prompt based on agent role
-          const rolePrompts: Record<string, string> = {
-            "ceo":
-              "You are the CEO. Coordinate and merge work from all team members into a cohesive upload-ready Instagram content pack.",
-            "research":
-              "You are the Research role. Create an audience pain map and identify trend angles for the content.",
-            "strategy":
-              "You are the Strategy role. Create content pillars and positioning strategy.",
-            "content":
-              "You are the Content role. Create hooks, scripts, captions, CTAs, and relevant hashtags.",
-            "media_production":
-              "You are the Media Production role. Create scene direction, on-screen text overlays, and thumbnail specifications.",
-            "qa":
-              "You are the QA role. Provide brand safety assessment and upload-readiness score.",
-            "automation":
-              "You are the Automation role. Document repeatable workflow, dashboard notes, and API integration points.",
-            "memory":
-              "You are the Memory role. Create reusable memory templates, content backlog, and reference materials.",
-            "growth":
-              "You are the Growth role. Define growth loops, CTAs, monetization strategy, and page positioning.",
-          };
-
-          const rolePrompt = rolePrompts[agent.role] || rolePrompts["content"];
+          // Get role-specific prompt
+          const rolePrompt = getAgentPrompt(agent);
 
           const prompt = `${topic}
 ${rolePrompt}
@@ -150,7 +180,8 @@ Provide practical, actionable output that can be directly used in production.
 Format your response as clear bullet points or structured sections.`;
 
           // Call Google Gemini REST API
-          const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
+          const geminiUrl =
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 
           const response = await fetch(geminiUrl, {
             method: "POST",
