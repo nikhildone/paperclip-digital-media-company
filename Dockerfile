@@ -77,6 +77,7 @@ args = sys.argv[1:]
 i = 0
 
 os.environ["GEMINI_SANDBOX"] = "false"
+os.environ["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
 
 # Gemini CLI exits when both key names are present. Prefer GEMINI_API_KEY for this adapter.
 if os.environ.get("GEMINI_API_KEY"):
@@ -114,10 +115,14 @@ while i < len(args):
         i += 1
         continue
 
+    if arg == "--skip-trust":
+        i += 1
+        continue
+
     rewritten.append(arg)
     i += 1
 
-final_args = ["--approval-mode", approval_mode, "--sandbox=none", *rewritten]
+final_args = ["--approval-mode", approval_mode, "--sandbox=none", "--skip-trust", *rewritten]
 os.execv("/usr/local/bin/gemini-real", ["/usr/local/bin/gemini-real", *final_args])
 PY
 chmod +x /usr/local/bin/gemini
@@ -145,7 +150,8 @@ ENV NODE_ENV=production \
   PAPERCLIP_DEPLOYMENT_MODE=authenticated \
   PAPERCLIP_DEPLOYMENT_EXPOSURE=private \
   OPENCODE_ALLOW_ALL_MODELS=true \
-  GEMINI_SANDBOX=false
+  GEMINI_SANDBOX=false \
+  GEMINI_CLI_TRUST_WORKSPACE=true
 
 EXPOSE 7860
 
