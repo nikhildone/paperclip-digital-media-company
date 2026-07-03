@@ -2,6 +2,7 @@ import { and, eq, notInArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, companyMemberships, principalPermissionGrants } from "@paperclipai/db";
 import type { PermissionKey, PrincipalType } from "@paperclipai/shared";
+import { logger } from "../middleware/logger.js";
 import { grantsForHumanRole, normalizeHumanRole } from "./company-member-roles.js";
 
 type GrantInput = {
@@ -13,6 +14,13 @@ export type PrincipalAccessCompatibilityBackfillStats = {
   agentMembershipsInserted: number;
   humanGrantsInserted: number;
 };
+
+function isStatementTimeout(error: unknown): boolean {
+  const err = error as { code?: unknown; message?: unknown; cause?: unknown };
+  if (err?.code === "57014") return true;
+  if (typeof err?.message === "string" && /statement timeout|canceling statement/i.test(err.message)) return true;
+  return Boolean(err?.cause && isStatementTimeout(err.cause));
+}
 
 export async function insertMissingPrincipalGrants(
   db: Db,
@@ -73,7 +81,7 @@ export async function ensureHumanRoleDefaultGrants(
   });
 }
 
-export async function backfillPrincipalAccessCompatibility(
+async function runPrincipalAccessCompatibilityBackfill(
   db: Db,
 ): Promise<PrincipalAccessCompatibilityBackfillStats> {
   const now = new Date();
@@ -126,16 +134,41 @@ export async function backfillPrincipalAccessCompatibility(
 
   let humanGrantsInserted = 0;
   for (const membership of activeHumanMemberships) {
-    humanGrantsInserted += await ensureHumanRoleDefaultGrants(db, {
-      companyId: membership.companyId,
-      principalId: membership.principalId,
-      membershipRole: membership.membershipRole,
-      grantedByUserId: null,
-    });
+    try {
+      humanGrantsInserted += await ensureHumanRoleDefaultGrants(db, {
+        companyId: membership.companyId,
+        principalId: membership.principalId,
+        membershipRole: membership.membershipRole,
+        grantedByUserId: null,
+      });
+    } catch (error) {
+      if (isStatementTimeout(error)) {
+        logger.warn({ err: error }, "Skipping remaining human principal grant backfill because PostgreSQL statement timed out");
+        break;
+      }
+      throw error;
+    }
   }
 
   return {
     agentMembershipsInserted,
     humanGrantsInserted,
   };
+}
+
+export async function backfillPrincipalAccessCompatibility(
+  db: Db,
+): Promise<PrincipalAccessCompatibilityBackfillStats> {
+  try {
+    return await runPrincipalAccessCompatibilityBackfill(db);
+  } catch (error) {
+    if (isStatementTimeout(error)) {
+      logger.warn(
+        { err: error },
+        "Skipping principal access compatibility startup backfill because PostgreSQL statement timed out",
+      );
+      return { agentMembershipsInserted: 0, humanGrantsInserted: 0 };
+    }
+    throw error;
+  }
 }
