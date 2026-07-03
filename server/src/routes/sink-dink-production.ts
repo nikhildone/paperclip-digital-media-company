@@ -5,7 +5,7 @@ import { agents as agentsTable, heartbeatRuns } from "@paperclipai/db";
 import { secretService } from "../services/secrets.js";
 import { assertCompanyAccess } from "./authz.js";
 
-const DEFAULT_PROVIDER = "gemini";
+const DEFAULT_PROVIDER = "openrouter";
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_TONE = "simple Hinglish, Indian Instagram reel style, emotional but practical, upload-ready, clear sections";
 const MAX_OUTPUT_CHARS = 24_000;
@@ -85,7 +85,12 @@ function readEnvBindingText(env: Record<string, unknown> | null, key: string): s
   if (typeof raw === "string") return readString(raw);
   const record = asRecord(raw);
   if (!record) return null;
-  return readString(record.value) ?? readString(record.plain) ?? readString(record.secretId) ?? readString(record.secret_id);
+  return readString(record.value)
+    ?? readString(record.plain)
+    ?? readString(record.secretId)
+    ?? readString(record.secret_id)
+    ?? readString(record.name)
+    ?? readString(record.key);
 }
 
 function normalizeProvider(value: unknown): Provider | null {
@@ -172,7 +177,7 @@ function readAgentModelRoute(agent: AgentRow, bodyModel: string): ModelRoute {
     ?? readString(routerConfig?.modelId)
     ?? readEnvBindingText(envConfig, "SINK_DINK_MODEL")
     ?? readEnvBindingText(envConfig, "MODEL_NAME")
-    ?? (provider === DEFAULT_PROVIDER ? bodyModel : PROVIDER_DEFAULT_MODEL[provider]);
+    ?? (provider === "gemini" ? bodyModel : PROVIDER_DEFAULT_MODEL[provider]);
 
   return {
     provider,
