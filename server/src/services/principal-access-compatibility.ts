@@ -159,6 +159,11 @@ async function runPrincipalAccessCompatibilityBackfill(
 export async function backfillPrincipalAccessCompatibility(
   db: Db,
 ): Promise<PrincipalAccessCompatibilityBackfillStats> {
+  if (process.env.PAPERCLIP_RUN_STARTUP_ACCESS_BACKFILL !== "true") {
+    logger.info("Skipped startup access compatibility backfill for faster cloud startup");
+    return { agentMembershipsInserted: 0, humanGrantsInserted: 0 };
+  }
+
   try {
     return await runPrincipalAccessCompatibilityBackfill(db);
   } catch (error) {
