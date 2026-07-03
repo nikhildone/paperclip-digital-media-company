@@ -5,6 +5,7 @@ import { forbidden } from "../errors.js";
 import { listServerAdapters } from "../adapters/index.js";
 import { hermesGatewayAgentConfigurationDoc } from "../adapters/hermes-gateway-doc.js";
 import { agentService } from "../services/agents.js";
+import { sinkDinkProductionRoutes } from "./sink-dink-production.js";
 
 const pluginOnlyAdapterDocs = new Map<string, string>([
   ["hermes_gateway", hermesGatewayAgentConfigurationDoc],
@@ -18,6 +19,11 @@ function hasCreatePermission(agent: { role: string; permissions: Record<string, 
 export function llmRoutes(db: Db) {
   const router = Router();
   const agentsSvc = agentService(db);
+
+  // Custom Paperclip/SINK DINK dashboard execution route. It is mounted here so
+  // /api/companies/:companyId/sink-dink/production/start is available even
+  // though the generic company router does not own this project-specific path.
+  router.use(sinkDinkProductionRoutes(db));
 
   async function assertCanRead(req: Request) {
     if (req.actor.type === "board") return;
