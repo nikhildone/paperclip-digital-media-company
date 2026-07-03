@@ -8,11 +8,23 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_TONE = "simple Hinglish, Indian Instagram reel style, emotional but practical, upload-ready, clear sections";
 const MAX_OUTPUT_CHARS = 24_000;
 const MAX_VISIBLE_AGENTS = 9;
+const TRANSIENT_RETRY_DELAYS_MS = [1_500, 3_500];
 const PRIORITY_ROLE_ORDER = ["ceo", "strategy", "research", "content", "creative", "automation", "engineer", "qa", "analytics", "growth", "distribution", "sales", "memory", "report", "general"];
 const PRIORITY_NAME_ORDER = ["ceo", "strategy director", "research director", "content director", "creative director", "automation director", "qa director", "analytics director", "growth director", "distribution director", "sales director", "memory director", "report director"];
 
 type AgentRow = typeof agentsTable.$inferSelect;
 type RunRow = typeof heartbeatRuns.$inferSelect;
+type GeminiRunResult = { text: string; model: string; attempts: number };
+
+type AgentProductionResult = {
+  agent: AgentRow;
+  run: RunRow;
+  status: "completed" | "failed";
+  model: string;
+  attempts: number;
+  output?: string;
+  error?: string;
+};
 
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -73,6 +85,19 @@ function geminiText(data: unknown): string {
   throw new Error(errorMessage);
 }
 
+function isTransientGeminiDemandError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /high demand|try again later|temporar|503|overloaded|rate limit/i.test(message);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function candidateModels(requestedModel: string) {
+  return Array.from(new Set([requestedModel, DEFAULT_MODEL]));
+}
+
 function agentPrompt(agent: AgentRow, input: { topic: string; tone: string; count: number }) {
   return [
     `You are ${agent.name}, role: ${agent.role}.`,
@@ -90,7 +115,7 @@ function agentPrompt(agent: AgentRow, input: { topic: string; tone: string; coun
   ].filter((part): part is string => Boolean(part)).join("\n");
 }
 
-async function callGemini(model: string, prompt: string) {
+async function callGeminiOnce(model: string, prompt: string) {
   const key = geminiApiKey();
   if (!key) throw new Error("Missing Gemini API key secret");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
@@ -113,6 +138,26 @@ async function callGemini(model: string, prompt: string) {
   return geminiText(data);
 }
 
+async function callGemini(requestedModel: string, prompt: string): Promise<GeminiRunResult> {
+  let attempts = 0;
+  let lastError: unknown = null;
+  for (const model of candidateModels(requestedModel)) {
+    for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
+      attempts += 1;
+      try {
+        const text = await callGeminiOnce(model, prompt);
+        return { text, model, attempts };
+      } catch (error) {
+        lastError = error;
+        if (!isTransientGeminiDemandError(error)) throw error;
+        const delay = TRANSIENT_RETRY_DELAYS_MS[attempt];
+        if (delay !== undefined) await sleep(delay);
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Gemini request failed"));
+}
+
 function truncate(value: string, max = MAX_OUTPUT_CHARS) {
   return value.length <= max ? value : `${value.slice(0, max)}\n\n[Output truncated]`;
 }
@@ -121,11 +166,11 @@ function buildBatchOutput(input: {
   batchId: string;
   successfulAgents: number;
   failedAgents: number;
-  results: Array<{ agent: AgentRow; run: RunRow; status: "completed" | "failed"; model: string; output?: string; error?: string }>;
+  results: AgentProductionResult[];
 }) {
   const lines = [
     `SINK DINK Direct Production Batch: ${input.batchId}`,
-    "Status: ok",
+    `Status: ${input.failedAgents === 0 ? "ok" : input.successfulAgents > 0 ? "partial" : "failed"}`,
     `Successful agents: ${input.successfulAgents}`,
     `Failed agents: ${input.failedAgents}`,
     "",
@@ -134,7 +179,7 @@ function buildBatchOutput(input: {
     lines.push(`## ${index + 1}. ${result.agent.name} (${result.agent.role})`);
     lines.push(`Status: ${result.status}`);
     lines.push(`Model: ${result.model}`);
-    lines.push("Attempts: 1");
+    lines.push(`Attempts: ${result.attempts}`);
     lines.push(`Run ID: ${result.run.id}`);
     lines.push("");
     if (result.status === "completed") {
@@ -217,13 +262,13 @@ export function sinkDinkProductionRoutes(db: Db) {
         .where(and(eq(agentsTable.id, agent.id), eq(agentsTable.companyId, companyId)));
     }
 
-    const results: Array<{ agent: AgentRow; run: RunRow; status: "completed" | "failed"; model: string; output?: string; error?: string }> = [];
+    const results: AgentProductionResult[] = [];
     for (let index = 0; index < orderedAgents.length; index++) {
       const agent = orderedAgents[index];
       const run = runRows[index];
       if (!run) continue;
       try {
-        const output = await callGemini(model, agentPrompt(agent, { topic, tone, count }));
+        const gemini = await callGemini(model, agentPrompt(agent, { topic, tone, count }));
         const finishedAt = new Date();
         await db
           .update(heartbeatRuns)
@@ -231,13 +276,15 @@ export function sinkDinkProductionRoutes(db: Db) {
             status: "succeeded",
             finishedAt,
             exitCode: 0,
-            stdoutExcerpt: truncate(output, 8000),
+            stdoutExcerpt: truncate(gemini.text, 8000),
             resultJson: {
               sinkDinkDirectProduction: true,
               batchId,
               phase: "completed",
               agentName: agent.name,
               visibleAgentCount: orderedAgents.length,
+              model: gemini.model,
+              attempts: gemini.attempts,
             },
             updatedAt: finishedAt,
             lastOutputAt: finishedAt,
@@ -248,9 +295,10 @@ export function sinkDinkProductionRoutes(db: Db) {
           .update(agentsTable)
           .set({ status: "idle", errorReason: null, lastHeartbeatAt: finishedAt, updatedAt: finishedAt })
           .where(and(eq(agentsTable.id, agent.id), eq(agentsTable.companyId, companyId)));
-        results.push({ agent, run, status: "completed", model, output });
+        results.push({ agent, run, status: "completed", model: gemini.model, attempts: gemini.attempts, output: gemini.text });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const transient = isTransientGeminiDemandError(error);
         const finishedAt = new Date();
         await db
           .update(heartbeatRuns)
@@ -259,7 +307,7 @@ export function sinkDinkProductionRoutes(db: Db) {
             finishedAt,
             exitCode: 1,
             error: message,
-            errorCode: "sink_dink_direct_production_failed",
+            errorCode: transient ? "gemini_transient_demand" : "sink_dink_direct_production_failed",
             stderrExcerpt: message,
             resultJson: {
               sinkDinkDirectProduction: true,
@@ -267,6 +315,7 @@ export function sinkDinkProductionRoutes(db: Db) {
               phase: "failed",
               agentName: agent.name,
               error: message,
+              transient,
               visibleAgentCount: orderedAgents.length,
             },
             updatedAt: finishedAt,
@@ -274,9 +323,14 @@ export function sinkDinkProductionRoutes(db: Db) {
           .where(eq(heartbeatRuns.id, run.id));
         await db
           .update(agentsTable)
-          .set({ status: "error", errorReason: message, lastHeartbeatAt: finishedAt, updatedAt: finishedAt })
+          .set({
+            status: transient ? "idle" : "error",
+            errorReason: transient ? null : message,
+            lastHeartbeatAt: finishedAt,
+            updatedAt: finishedAt,
+          })
           .where(and(eq(agentsTable.id, agent.id), eq(agentsTable.companyId, companyId)));
-        results.push({ agent, run, status: "failed", model, error: message });
+        results.push({ agent, run, status: "failed", model, attempts: candidateModels(model).length * (TRANSIENT_RETRY_DELAYS_MS.length + 1), error: message });
       }
     }
 
@@ -293,7 +347,7 @@ export function sinkDinkProductionRoutes(db: Db) {
       resultJson: {
         sinkDinkDirectProduction: true,
         responsePayload: {
-          status: failedAgents === 0 ? "ok" : "partial",
+          status: failedAgents === 0 ? "ok" : successfulAgents > 0 ? "partial" : "failed",
           successfulAgents,
           failedAgents,
           visibleAgentCount: orderedAgents.length,
