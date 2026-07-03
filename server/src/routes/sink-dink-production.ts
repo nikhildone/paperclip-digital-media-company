@@ -85,9 +85,23 @@ function geminiText(data: unknown): string {
   throw new Error(errorMessage);
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isGeminiQuotaExceededError(error: unknown) {
+  const message = errorMessage(error);
+  return /quota exceeded|current quota|free_tier_requests|billing details|rate-limits|rate limit/i.test(message);
+}
+
 function isTransientGeminiDemandError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /high demand|try again later|temporar|503|overloaded|rate limit/i.test(message);
+  if (isGeminiQuotaExceededError(error)) return false;
+  const message = errorMessage(error);
+  return /high demand|try again later|temporar|503|overloaded/i.test(message);
+}
+
+function isRecoverableModelCapacityError(error: unknown) {
+  return isGeminiQuotaExceededError(error) || isTransientGeminiDemandError(error);
 }
 
 function sleep(ms: number) {
@@ -149,6 +163,7 @@ async function callGemini(requestedModel: string, prompt: string): Promise<Gemin
         return { text, model, attempts };
       } catch (error) {
         lastError = error;
+        if (isGeminiQuotaExceededError(error)) throw error;
         if (!isTransientGeminiDemandError(error)) throw error;
         const delay = TRANSIENT_RETRY_DELAYS_MS[attempt];
         if (delay !== undefined) await sleep(delay);
@@ -297,8 +312,9 @@ export function sinkDinkProductionRoutes(db: Db) {
           .where(and(eq(agentsTable.id, agent.id), eq(agentsTable.companyId, companyId)));
         results.push({ agent, run, status: "completed", model: gemini.model, attempts: gemini.attempts, output: gemini.text });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const transient = isTransientGeminiDemandError(error);
+        const message = errorMessage(error);
+        const quotaExceeded = isGeminiQuotaExceededError(error);
+        const recoverable = isRecoverableModelCapacityError(error);
         const finishedAt = new Date();
         await db
           .update(heartbeatRuns)
@@ -307,7 +323,7 @@ export function sinkDinkProductionRoutes(db: Db) {
             finishedAt,
             exitCode: 1,
             error: message,
-            errorCode: transient ? "gemini_transient_demand" : "sink_dink_direct_production_failed",
+            errorCode: quotaExceeded ? "gemini_quota_exceeded" : recoverable ? "gemini_transient_demand" : "sink_dink_direct_production_failed",
             stderrExcerpt: message,
             resultJson: {
               sinkDinkDirectProduction: true,
@@ -315,7 +331,8 @@ export function sinkDinkProductionRoutes(db: Db) {
               phase: "failed",
               agentName: agent.name,
               error: message,
-              transient,
+              quotaExceeded,
+              recoverable,
               visibleAgentCount: orderedAgents.length,
             },
             updatedAt: finishedAt,
@@ -324,13 +341,13 @@ export function sinkDinkProductionRoutes(db: Db) {
         await db
           .update(agentsTable)
           .set({
-            status: transient ? "idle" : "error",
-            errorReason: transient ? null : message,
+            status: recoverable ? "idle" : "error",
+            errorReason: recoverable ? null : message,
             lastHeartbeatAt: finishedAt,
             updatedAt: finishedAt,
           })
           .where(and(eq(agentsTable.id, agent.id), eq(agentsTable.companyId, companyId)));
-        results.push({ agent, run, status: "failed", model, attempts: candidateModels(model).length * (TRANSIENT_RETRY_DELAYS_MS.length + 1), error: message });
+        results.push({ agent, run, status: "failed", model, attempts: quotaExceeded ? 1 : candidateModels(model).length * (TRANSIENT_RETRY_DELAYS_MS.length + 1), error: message });
       }
     }
 
