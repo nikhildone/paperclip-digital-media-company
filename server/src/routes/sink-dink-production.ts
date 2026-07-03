@@ -4,10 +4,12 @@ import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, heartbeatRuns } from "@paperclipai/db";
 import { assertCompanyAccess } from "./authz.js";
 
-const DEFAULT_AGENT_NAMES = ["CEO", "Automation Director", "Content Director"];
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_TONE = "simple Hinglish, Indian Instagram reel style, emotional but practical, upload-ready, clear sections";
 const MAX_OUTPUT_CHARS = 24_000;
+const MAX_VISIBLE_AGENTS = 9;
+const PRIORITY_ROLE_ORDER = ["ceo", "strategy", "research", "content", "creative", "automation", "engineer", "qa", "analytics", "growth", "distribution", "sales", "memory", "report", "general"];
+const PRIORITY_NAME_ORDER = ["ceo", "strategy director", "research director", "content director", "creative director", "automation director", "qa director", "analytics director", "growth director", "distribution director", "sales director", "memory director", "report director"];
 
 type AgentRow = typeof agentsTable.$inferSelect;
 type RunRow = typeof heartbeatRuns.$inferSelect;
@@ -20,6 +22,29 @@ function readPositiveInt(value: unknown, fallback: number, max: number) {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.max(1, Math.min(max, Math.floor(parsed)));
+}
+
+function sortAgentsForSinkDinkProduction(left: AgentRow, right: AgentRow) {
+  const leftName = left.name.trim().toLowerCase();
+  const rightName = right.name.trim().toLowerCase();
+  const leftRole = left.role.trim().toLowerCase();
+  const rightRole = right.role.trim().toLowerCase();
+  const leftNameIndex = PRIORITY_NAME_ORDER.indexOf(leftName);
+  const rightNameIndex = PRIORITY_NAME_ORDER.indexOf(rightName);
+  const leftNameScore = leftNameIndex >= 0 ? leftNameIndex : 100;
+  const rightNameScore = rightNameIndex >= 0 ? rightNameIndex : 100;
+  if (leftNameScore !== rightNameScore) return leftNameScore - rightNameScore;
+  const leftRoleIndex = PRIORITY_ROLE_ORDER.indexOf(leftRole);
+  const rightRoleIndex = PRIORITY_ROLE_ORDER.indexOf(rightRole);
+  const leftRoleScore = leftRoleIndex >= 0 ? leftRoleIndex : 100;
+  const rightRoleScore = rightRoleIndex >= 0 ? rightRoleIndex : 100;
+  if (leftRoleScore !== rightRoleScore) return leftRoleScore - rightRoleScore;
+  return left.name.localeCompare(right.name);
+}
+
+function isRunnableAgent(agent: AgentRow) {
+  const status = agent.status.trim().toLowerCase();
+  return status !== "paused" && status !== "archived";
 }
 
 function geminiApiKey() {
@@ -60,7 +85,7 @@ function agentPrompt(agent: AgentRow, input: { topic: string; tone: string; coun
     "",
     `Tone: ${input.tone}`,
     `Create ${input.count} concise, upload-ready Instagram reel/post content pack(s).`,
-    "Do not write internal technical notes unless your role is Automation Director; even then keep it short and practical.",
+    "Work only from your role perspective. Keep output useful for the CEO final production pack.",
     "Use simple Hinglish for a non-IT Indian creator. Keep output directly usable.",
   ].filter((part): part is string => Boolean(part)).join("\n");
 }
@@ -134,7 +159,7 @@ export function sinkDinkProductionRoutes(db: Db) {
     const tone = readString(body.tone) ?? DEFAULT_TONE;
     const model = readString(body.model) ?? DEFAULT_MODEL;
     const count = readPositiveInt(body.count, 3, 10);
-    const agentLimit = readPositiveInt(body.agentLimit, 3, 9);
+    const agentLimit = MAX_VISIBLE_AGENTS;
     const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
     const companyAgents = await db
@@ -142,13 +167,13 @@ export function sinkDinkProductionRoutes(db: Db) {
       .from(agentsTable)
       .where(eq(agentsTable.companyId, companyId));
 
-    const orderedAgents = DEFAULT_AGENT_NAMES
-      .map((name) => companyAgents.find((agent) => agent.name === name))
-      .filter((agent): agent is AgentRow => Boolean(agent))
+    const orderedAgents = companyAgents
+      .filter(isRunnableAgent)
+      .sort(sortAgentsForSinkDinkProduction)
       .slice(0, agentLimit);
 
     if (orderedAgents.length === 0) {
-      res.status(404).json({ error: "No SINK DINK production agents found" });
+      res.status(404).json({ error: "No runnable SINK DINK production agents found" });
       return;
     }
 
@@ -174,11 +199,13 @@ export function sinkDinkProductionRoutes(db: Db) {
             batchId,
             topic,
             source: "assign_task_direct_production",
+            visibleAgentCount: orderedAgents.length,
           },
           resultJson: {
             sinkDinkDirectProduction: true,
             batchId,
             phase: "running",
+            visibleAgentCount: orderedAgents.length,
           },
         })
         .returning();
@@ -210,6 +237,7 @@ export function sinkDinkProductionRoutes(db: Db) {
               batchId,
               phase: "completed",
               agentName: agent.name,
+              visibleAgentCount: orderedAgents.length,
             },
             updatedAt: finishedAt,
             lastOutputAt: finishedAt,
@@ -239,6 +267,7 @@ export function sinkDinkProductionRoutes(db: Db) {
               phase: "failed",
               agentName: agent.name,
               error: message,
+              visibleAgentCount: orderedAgents.length,
             },
             updatedAt: finishedAt,
           })
@@ -267,6 +296,7 @@ export function sinkDinkProductionRoutes(db: Db) {
           status: failedAgents === 0 ? "ok" : "partial",
           successfulAgents,
           failedAgents,
+          visibleAgentCount: orderedAgents.length,
           runIds: runRows.map((run) => run.id),
         },
       },
