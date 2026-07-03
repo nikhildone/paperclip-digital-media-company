@@ -210,7 +210,7 @@ export const issuesApi = {
   create: async (companyId: string, data: Record<string, unknown>) => {
     const issue = await api.post<Issue>(`/companies/${companyId}/issues`, data);
     if (companyId === SINK_DINK_COMPANY_ID) {
-      await runSinkDinkProductionForIssue(companyId, issue, data).catch((error) => {
+      void runSinkDinkProductionForIssue(companyId, issue, data).catch((error) => {
         console.warn("SINK DINK direct production after issue creation failed", error);
       });
     }
