@@ -80,6 +80,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function readEnvBindingText(env: Record<string, unknown> | null, key: string): string | null {
+  const raw = env?.[key];
+  if (typeof raw === "string") return readString(raw);
+  const record = asRecord(raw);
+  if (!record) return null;
+  return readString(record.value) ?? readString(record.plain) ?? readString(record.secretId) ?? readString(record.secret_id);
+}
+
 function normalizeProvider(value: unknown): Provider | null {
   const provider = readString(value)?.toLowerCase();
   if (provider === "google" || provider === "google_gemini") return "gemini";
@@ -154,18 +162,37 @@ function readAgentModelRoute(agent: AgentRow, bodyModel: string): ModelRoute {
   const adapterConfig = asRecord(agent.adapterConfig);
   const runtimeConfig = asRecord(agent.runtimeConfig);
   const metadata = asRecord(agent.metadata);
+  const envConfig = asRecord(adapterConfig?.env);
   const routerConfig = asRecord(adapterConfig?.modelRouter) ?? asRecord(runtimeConfig?.modelRouter) ?? asRecord(metadata?.modelRouter) ?? null;
-  const provider = normalizeProvider(routerConfig?.provider) ?? normalizeProvider(routerConfig?.type) ?? DEFAULT_PROVIDER;
-  const model = readString(routerConfig?.model) ?? readString(routerConfig?.modelId) ?? (provider === DEFAULT_PROVIDER ? bodyModel : PROVIDER_DEFAULT_MODEL[provider]);
+
+  const providerInput = routerConfig?.provider ?? routerConfig?.type ?? readEnvBindingText(envConfig, "SINK_DINK_PROVIDER") ?? readEnvBindingText(envConfig, "MODEL_PROVIDER");
+  const provider = normalizeProvider(providerInput) ?? DEFAULT_PROVIDER;
   const defaultSecret = PROVIDER_DEFAULT_SECRET[provider];
+  const model = readString(routerConfig?.model)
+    ?? readString(routerConfig?.modelId)
+    ?? readEnvBindingText(envConfig, "SINK_DINK_MODEL")
+    ?? readEnvBindingText(envConfig, "MODEL_NAME")
+    ?? (provider === DEFAULT_PROVIDER ? bodyModel : PROVIDER_DEFAULT_MODEL[provider]);
+
   return {
     provider,
     model,
-    secretName: readString(routerConfig?.apiKeySecret) ?? readString(routerConfig?.secret) ?? readString(routerConfig?.secretName) ?? defaultSecret,
-    secretId: readString(routerConfig?.apiKeySecretId) ?? readString(routerConfig?.secretId),
-    envKey: readString(routerConfig?.apiKeyEnv) ?? defaultSecret,
-    temperature: readNumber(routerConfig?.temperature),
-    maxTokens: readNumber(routerConfig?.maxTokens),
+    secretName: readString(routerConfig?.apiKeySecret)
+      ?? readString(routerConfig?.secret)
+      ?? readString(routerConfig?.secretName)
+      ?? readEnvBindingText(envConfig, "SINK_DINK_API_KEY_SECRET")
+      ?? readEnvBindingText(envConfig, "MODEL_API_KEY_SECRET")
+      ?? defaultSecret,
+    secretId: readString(routerConfig?.apiKeySecretId)
+      ?? readString(routerConfig?.secretId)
+      ?? readEnvBindingText(envConfig, "SINK_DINK_API_KEY_SECRET_ID")
+      ?? readEnvBindingText(envConfig, "MODEL_API_KEY_SECRET_ID"),
+    envKey: readString(routerConfig?.apiKeyEnv)
+      ?? readEnvBindingText(envConfig, "SINK_DINK_API_KEY_ENV")
+      ?? readEnvBindingText(envConfig, "MODEL_API_KEY_ENV")
+      ?? defaultSecret,
+    temperature: readNumber(routerConfig?.temperature) ?? readNumber(readEnvBindingText(envConfig, "SINK_DINK_TEMPERATURE")),
+    maxTokens: readNumber(routerConfig?.maxTokens) ?? readNumber(readEnvBindingText(envConfig, "SINK_DINK_MAX_TOKENS")),
   };
 }
 
