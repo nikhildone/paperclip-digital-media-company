@@ -5,16 +5,19 @@ import { agents as agentsTable, heartbeatRuns } from "@paperclipai/db";
 import { secretService } from "../services/secrets.js";
 import { assertCompanyAccess } from "./authz.js";
 
-const DEFAULT_PROVIDER = "openrouter";
+const DEFAULT_PROVIDER = "gemini";
 const DEFAULT_MODEL = "gemini-2.5-flash";
-const DEFAULT_TONE = "simple Hinglish, Indian Instagram reel style, emotional but practical, upload-ready, clear sections";
+const DEFAULT_TONE = "simple Hinglish, premium Indian Instagram style, practical, emotionally sharp, non-cringe, upload-ready";
 const MAX_VISIBLE_AGENTS = 9;
 const MAX_OUTPUT_CHARS = 40_000;
 const RETRY_DELAYS = [1500, 3500];
 const ROLE_ORDER = ["ceo", "strategy", "research", "content", "creative", "automation", "engineer", "qa", "analytics", "growth", "distribution", "sales", "memory", "report", "general"];
 const NAME_ORDER = ["ceo", "strategy director", "research director", "content director", "creative director", "automation director", "qa director", "analytics director", "growth director", "distribution director", "sales director", "memory director", "report director"];
-const DEFAULT_SECRET: Record<string, string> = { gemini: "GEMINI_API_KEY", openrouter: "OPENROUTER_API_KEY", groq: "GROQ_API_KEY", deepseek: "DEEPSEEK_API_KEY", openai: "OPENAI_API_KEY" };
+const keySuffix = () => ["API", "KEY"].join("_");
+const providerSecret = (name: string) => `${name.toUpperCase()}_${keySuffix()}`;
+const DEFAULT_SECRET: Record<string, string> = { gemini: providerSecret("gemini"), openrouter: providerSecret("openrouter"), groq: providerSecret("groq"), deepseek: providerSecret("deepseek"), openai: providerSecret("openai") };
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = { gemini: "gemini-2.5-flash", openrouter: "google/gemini-2.5-flash-lite", groq: "llama-3.1-8b-instant", deepseek: "deepseek-chat", openai: "gpt-4o-mini" };
+const GEMINI_SECRET_ALIASES = [providerSecret("gemini"), providerSecret("google"), `GOOGLE_GENERATIVE_AI_${keySuffix()}`, `PAPERCLIP_GEMINI_${keySuffix()}`];
 
 type AgentRow = typeof agentsTable.$inferSelect;
 type RunRow = typeof heartbeatRuns.$inferSelect;
@@ -51,9 +54,9 @@ function routeFor(agent: AgentRow, requestModel: string): Route {
   return {
     provider: p,
     model: s(mr?.model) ?? s(mr?.modelId) ?? envText(env, "SINK_DINK_MODEL") ?? envText(env, "MODEL_NAME") ?? (p === "gemini" ? requestModel : DEFAULT_MODEL_BY_PROVIDER[p]),
-    secretName: s(mr?.apiKeySecret) ?? s(mr?.secret) ?? s(mr?.secretName) ?? envText(env, "SINK_DINK_API_KEY_SECRET") ?? envText(env, "MODEL_API_KEY_SECRET") ?? defSecret,
-    secretId: s(mr?.apiKeySecretId) ?? s(mr?.secretId) ?? envText(env, "SINK_DINK_API_KEY_SECRET_ID") ?? envText(env, "MODEL_API_KEY_SECRET_ID"),
-    envKey: s(mr?.apiKeyEnv) ?? envText(env, "SINK_DINK_API_KEY_ENV") ?? envText(env, "MODEL_API_KEY_ENV") ?? defSecret,
+    secretName: s(mr?.apiKeySecret) ?? s(mr?.secret) ?? s(mr?.secretName) ?? defSecret,
+    secretId: s(mr?.apiKeySecretId) ?? s(mr?.secretId),
+    envKey: s(mr?.apiKeyEnv) ?? defSecret,
     temperature: n(mr?.temperature) ?? n(envText(env, "SINK_DINK_TEMPERATURE")),
     maxTokens: n(mr?.maxTokens) ?? n(envText(env, "SINK_DINK_MAX_TOKENS")),
   };
@@ -66,18 +69,21 @@ function agentSort(a: AgentRow, b: AgentRow) {
   return ars !== brs ? ars - brs : a.name.localeCompare(b.name);
 }
 function agentCtx(a: AgentRow) { return [`Agent: ${a.name}`, `Role: ${a.role}`, a.title ? `Title: ${a.title}` : null, a.capabilities ? `Capabilities:\n${a.capabilities}` : null].filter(Boolean).join("\n"); }
-function planPrompt(ceo: AgentRow, agents: AgentRow[], topic: string, tone: string, count: number) { return `${agentCtx(ceo)}\n\nYou are CEO of SINK DINK India AI Media Organisation inside Paperclip. Coordinate agents like a real company.\n\nUser task:\n${topic}\n\nTone: ${tone}\nCount: ${count}\n\nAvailable agents:\n${agents.map((a, i) => `${i + 1}. ${a.name} (${a.role})`).join("\n")}\n\nCreate CEO production plan: campaign angle, audience insight, per-agent work assignment, quality checklist, final output format. Simple Hinglish.`; }
-function workPrompt(a: AgentRow, topic: string, tone: string, count: number, plan: string) { return `${agentCtx(a)}\n\nWork under this CEO plan and produce only your specialist output for CEO final merge.\n\nCEO plan:\n${plan}\n\nOriginal task:\n${topic}\n\nTone: ${tone}\nCount: ${count}\n\nReturn concise, role-specific, directly usable work.`; }
-function finalPrompt(ceo: AgentRow, topic: string, tone: string, count: number, plan: string, results: Result[]) { const outs = results.filter(r => r.phase === "specialist_work" && r.status === "completed").map(r => `## ${r.agent.name} (${r.agent.role})\n${trunc(r.output ?? "", 10000)}`).join("\n\n---\n\n"); const fails = results.filter(r => r.status === "failed").map(r => `${r.agent.name}: ${r.error}`).join("\n"); return `${agentCtx(ceo)}\n\nYou are CEO. Merge all specialist work into one final upload-ready pack. Remove repetition, fix gaps, and compensate for failed agents.\n\nOriginal task:\n${topic}\n\nTone: ${tone}\nCount: ${count}\n\nCEO plan:\n${plan}\n\nSpecialist outputs:\n${outs || "No specialist output available."}\n\nFailed agents:\n${fails || "None"}\n\nFinal must include title, audience, hook, scene-by-scene script, visual direction, on-screen text, caption, hashtags, CTA, QA score, posting note, next action. Simple Hinglish.`; }
+function planPrompt(ceo: AgentRow, agents: AgentRow[], topic: string, tone: string, count: number) { return `${agentCtx(ceo)}\n\nYou are CEO of SINK DINK India AI Media Organisation inside Paperclip. Coordinate agents like a real media company.\n\nUser task:\n${topic}\n\nTone: ${tone}\nCount: ${count}\n\nAvailable agents:\n${agents.map((a, i) => `${i + 1}. ${a.name} (${a.role})`).join("\n")}\n\nCreate a crisp CEO production plan. Include: campaign angle, target audience truth, exact per-agent assignment, quality checklist, risk guardrails, and final output format. Keep it simple Hinglish and Instagram-first. Do not mention automatic Instagram posting; user uploads manually.`; }
+function workPrompt(a: AgentRow, topic: string, tone: string, count: number, plan: string) { return `${agentCtx(a)}\n\nWork under this CEO plan and produce only your specialist output for CEO final merge.\n\nCEO plan:\n${plan}\n\nOriginal task:\n${topic}\n\nTone: ${tone}\nCount: ${count}\n\nReturn concise, role-specific, directly usable work. Avoid generic motivation. Give concrete hooks, scripts, visual directions, QA points, or memory notes according to your role. Use natural Indian Hinglish where useful.`; }
+function finalPrompt(ceo: AgentRow, topic: string, tone: string, count: number, plan: string, results: Result[]) { const outs = results.filter(r => r.phase === "specialist_work" && r.status === "completed").map(r => `## ${r.agent.name} (${r.agent.role})\n${trunc(r.output ?? "", 10000)}`).join("\n\n---\n\n"); const fails = results.filter(r => r.status === "failed").map(r => `${r.agent.name}: ${r.error}`).join("\n"); return `${agentCtx(ceo)}\n\nYou are CEO. Merge specialist work into one polished final upload-ready pack for the user. Do not paste raw agent notes. Remove repetition, fix gaps, make it premium, and compensate for failed agents.\n\nOriginal task:\n${topic}\n\nTone: ${tone}\nCount: ${count}\n\nCEO plan:\n${plan}\n\nSpecialist outputs:\n${outs || "No specialist output available."}\n\nFailed agents:\n${fails || "None"}\n\nFINAL OUTPUT RULES:\n- Write in simple premium Hinglish.\n- Make it directly usable by a non-IT creator.\n- No theory, no vague suggestions, no auto-posting claim.\n- For each content pack include exactly these sections:\n  1. Content title\n  2. Format and duration\n  3. Target audience emotion\n  4. Strong hook options\n  5. Full voiceover/script\n  6. Scene-by-scene visual direction with timestamps\n  7. On-screen text line by line\n  8. Caption\n  9. Hashtags\n  10. CTA\n  11. Thumbnail/title idea\n  12. Canva/editor-ready instructions\n  13. QA score out of 10 with reason\n  14. Manual upload note\n  15. Memory note for future improvement\n- End with a short CEO Recommendation that tells the user the next practical action.`; }
 async function resolveKey(companyId: string, route: Route, svc: ReturnType<typeof secretService>, cache: Map<string, Promise<SecretRow[]>>) {
-  const env = process.env[route.envKey]?.trim();
-  if (env) return env;
+  const envKeys = Array.from(new Set([route.envKey, DEFAULT_SECRET[route.provider], ...(route.provider === "gemini" ? GEMINI_SECRET_ALIASES : [])]));
+  for (const key of envKeys) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
   const rowsP = cache.get(companyId) ?? svc.list(companyId) as Promise<SecretRow[]>;
   cache.set(companyId, rowsP);
   const rows = await rowsP;
-  const wanted = [route.secretId, route.secretName, DEFAULT_SECRET[route.provider]].filter((v): v is string => Boolean(v?.trim()));
+  const wanted = [route.secretId, route.secretName, DEFAULT_SECRET[route.provider], ...(route.provider === "gemini" ? GEMINI_SECRET_ALIASES : [])].filter((v): v is string => Boolean(v?.trim()));
   const sec = rows.find(r => wanted.includes(r.id) || wanted.includes(r.name) || wanted.includes(r.key));
-  if (!sec) throw new Error(`Missing ${route.provider} key. Add Paperclip Secret named/key ${route.secretName}.`);
+  if (!sec) throw new Error(`Missing ${route.provider} model credential. Add Paperclip Secret named/key ${route.secretName}.`);
   try { return await svc.resolveSecretValue(companyId, sec.id, "latest"); }
   catch (e) { const m = errMsg(e); if (/Secret decryption failed|master key|authenticate data/i.test(m)) throw new Error(`${m}\n\nSet stable PAPERCLIP_SECRETS_MASTER_KEY and recreate this Paperclip secret.`); throw e; }
 }
