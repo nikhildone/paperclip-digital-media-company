@@ -26,53 +26,6 @@
 // exit via `shutdownInstrumentation()`, which index.ts awaits in its signal
 // handler before `process.exit`.
 
-function isRecoverablePostgresStatementTimeout(error: unknown): boolean {
-  const candidate = error as { code?: unknown; message?: unknown; cause?: unknown };
-  if (candidate?.code === "57014") return true;
-  const message = typeof candidate?.message === "string" ? candidate.message : String(error ?? "");
-  if (/canceling statement due to statement timeout/i.test(message)) return true;
-  return Boolean(candidate?.cause && isRecoverablePostgresStatementTimeout(candidate.cause));
-}
-
-const startupGuardGlobal = globalThis as typeof globalThis & {
-  __paperclipRecoverableDbTimeoutGuardInstalled?: boolean;
-};
-
-if (!startupGuardGlobal.__paperclipRecoverableDbTimeoutGuardInstalled) {
-  startupGuardGlobal.__paperclipRecoverableDbTimeoutGuardInstalled = true;
-
-  process.on("unhandledRejection", (reason) => {
-    if (isRecoverablePostgresStatementTimeout(reason)) {
-      // Supabase pooler may cancel slow background startup queries. These are
-      // recoverable for the HF dashboard-first deployment and must not crash the
-      // whole app after the server is already listening. Foreground API routes
-      // still return their own errors normally.
-      // eslint-disable-next-line no-console
-      console.warn(
-        "[paperclip] Suppressed recoverable PostgreSQL statement timeout from a background promise",
-        reason,
-      );
-      return;
-    }
-    // Keep Node's fail-loud behaviour for non-recoverable bugs.
-    setImmediate(() => {
-      throw reason instanceof Error ? reason : new Error(String(reason));
-    });
-  });
-
-  process.on("uncaughtException", (error, origin) => {
-    if (origin === "unhandledRejection" && isRecoverablePostgresStatementTimeout(error)) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        "[paperclip] Suppressed recoverable PostgreSQL statement timeout promoted to uncaughtException",
-        error,
-      );
-      return;
-    }
-    throw error;
-  });
-}
-
 const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
 let sdkShutdown: (() => Promise<void>) | null = null;
