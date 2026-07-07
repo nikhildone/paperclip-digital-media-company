@@ -15,12 +15,13 @@ import { queryKeys } from "../lib/queryKeys";
 import { MetricCard } from "../components/MetricCard";
 import { EmptyState } from "../components/EmptyState";
 import { StatusIcon } from "../components/StatusIcon";
+import { Button } from "@/components/ui/button";
 
 import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
-import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
+import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle, PlayCircle, Copy, CheckCircle2 } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -28,20 +29,45 @@ import type { Agent, Issue } from "@paperclipai/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
 
 const DASHBOARD_ACTIVITY_LIMIT = 10;
+const SINK_DINK_COMPANY_NAME = "SINK & DINK India AI Media Organisation";
+const DEFAULT_SINK_DINK_TOPIC = "SINK DINK India ke liye 3 premium upload-ready Instagram reel packs banao: family pressure, childfree choice, couple freedom aur financial peace.";
+const DEFAULT_SINK_DINK_TONE = "simple Hinglish, premium Indian Instagram style, practical, emotionally sharp, non-cringe, upload-ready";
 
 function getRecentIssues(issues: Issue[]): Issue[] {
   return [...issues]
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
+function readResponseText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value.trim().length > 0 ? value : null;
+}
+
 export function Dashboard() {
-  const { selectedCompanyId, companies } = useCompany();
+  const { selectedCompanyId, selectedCompany, companies, setSelectedCompanyId } = useCompany();
   const { openOnboarding } = useDialogActions();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [animatedActivityIds, setAnimatedActivityIds] = useState<Set<string>>(new Set());
+  const [sinkDinkTopic, setSinkDinkTopic] = useState(DEFAULT_SINK_DINK_TOPIC);
+  const [sinkDinkTone, setSinkDinkTone] = useState(DEFAULT_SINK_DINK_TONE);
+  const [sinkDinkCount, setSinkDinkCount] = useState(3);
+  const [sinkDinkRunning, setSinkDinkRunning] = useState(false);
+  const [sinkDinkError, setSinkDinkError] = useState<string | null>(null);
+  const [sinkDinkOutput, setSinkDinkOutput] = useState<string | null>(null);
+  const [sinkDinkCopied, setSinkDinkCopied] = useState(false);
   const seenActivityIdsRef = useRef<Set<string>>(new Set());
   const hydratedActivityRef = useRef(false);
   const activityAnimationTimersRef = useRef<number[]>([]);
+
+  const sinkDinkCompany = useMemo(
+    () => companies.find((company) => company.name === SINK_DINK_COMPANY_NAME)
+      ?? companies.find((company) => company.name.toLowerCase().includes("sink") && company.name.toLowerCase().includes("dink"))
+      ?? null,
+    [companies],
+  );
+  const sinkDinkCompanyId = sinkDinkCompany?.id ?? selectedCompanyId;
+  const isSinkDinkSelected = selectedCompany?.id === sinkDinkCompanyId;
+  const shouldShowSinkDinkControl = Boolean(sinkDinkCompanyId);
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
@@ -171,6 +197,55 @@ export function Dashboard() {
     return agents.find((a) => a.id === id)?.name ?? null;
   };
 
+  async function startSinkDinkProduction() {
+    if (!sinkDinkCompanyId || sinkDinkRunning) return;
+    setSinkDinkRunning(true);
+    setSinkDinkError(null);
+    setSinkDinkOutput(null);
+    setSinkDinkCopied(false);
+    try {
+      const response = await fetch(`/api/companies/${sinkDinkCompanyId}/sink-dink/production/start`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: sinkDinkTopic,
+          tone: sinkDinkTone,
+          count: sinkDinkCount,
+        }),
+      });
+      const text = await response.text();
+      let payload: Record<string, unknown> | null = null;
+      try {
+        payload = text ? JSON.parse(text) as Record<string, unknown> : null;
+      } catch {
+        payload = null;
+      }
+      if (!response.ok) {
+        const message = readResponseText(payload?.error)
+          ?? readResponseText(payload?.message)
+          ?? readResponseText(text)
+          ?? `Production failed with HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      const output = readResponseText(payload?.stdoutExcerpt)
+        ?? readResponseText(text)
+        ?? "Production completed, but no output text was returned.";
+      setSinkDinkOutput(output);
+    } catch (err) {
+      setSinkDinkError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSinkDinkRunning(false);
+    }
+  }
+
+  async function copySinkDinkOutput() {
+    if (!sinkDinkOutput) return;
+    await navigator.clipboard.writeText(sinkDinkOutput);
+    setSinkDinkCopied(true);
+    window.setTimeout(() => setSinkDinkCopied(false), 1500);
+  }
+
   if (!selectedCompanyId) {
     if (companies.length === 0) {
       return (
@@ -196,6 +271,100 @@ export function Dashboard() {
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-destructive">{error.message}</p>}
+
+      {shouldShowSinkDinkControl && (
+        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">SINK DINK</span>
+                <span className="text-xs text-muted-foreground">Dashboard-first CEO production</span>
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold">Start CEO Production Batch</h2>
+                <p className="text-sm text-muted-foreground">
+                  CEO plan banayega, specialist agents kaam karenge, aur final upload-ready pack yahin milega.
+                </p>
+              </div>
+              {sinkDinkCompany && !isSinkDinkSelected ? (
+                <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/25 dark:bg-amber-950/60 dark:text-amber-100">
+                  Current dashboard company alag hai. Batch automatically {sinkDinkCompany.name} me chalega.
+                  <button
+                    type="button"
+                    className="ml-2 underline underline-offset-2"
+                    onClick={() => setSelectedCompanyId(sinkDinkCompany.id, { source: "manual" })}
+                  >
+                    Switch to SINK DINK
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={startSinkDinkProduction} disabled={sinkDinkRunning || !sinkDinkTopic.trim()}>
+                <PlayCircle className="mr-2 h-4 w-4" />
+                {sinkDinkRunning ? "CEO running..." : "Start CEO Batch"}
+              </Button>
+              {sinkDinkOutput ? (
+                <Button variant="outline" onClick={copySinkDinkOutput}>
+                  {sinkDinkCopied ? <CheckCircle2 className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                  {sinkDinkCopied ? "Copied" : "Copy Output"}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Task / Topic</span>
+              <textarea
+                value={sinkDinkTopic}
+                onChange={(event) => setSinkDinkTopic(event.target.value)}
+                rows={4}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Count</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={sinkDinkCount}
+                  onChange={(event) => setSinkDinkCount(Math.max(1, Math.min(10, Number(event.target.value) || 1)))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Tone</span>
+                <input
+                  value={sinkDinkTone}
+                  onChange={(event) => setSinkDinkTone(event.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+              </label>
+            </div>
+          </div>
+
+          {sinkDinkError ? (
+            <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {sinkDinkError}
+            </div>
+          ) : null}
+
+          {sinkDinkOutput ? (
+            <div className="mt-4 overflow-hidden rounded-lg border border-border">
+              <div className="flex items-center justify-between border-b border-border bg-muted/50 px-3 py-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">CEO Final Output</span>
+                <span className="text-xs text-muted-foreground">Copy-ready</span>
+              </div>
+              <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap bg-background p-4 text-xs leading-relaxed">
+                {sinkDinkOutput}
+              </pre>
+            </div>
+          ) : null}
+        </section>
+      )}
 
       {hasNoAgents && (
         <div className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-500/25 dark:bg-amber-950/60">
