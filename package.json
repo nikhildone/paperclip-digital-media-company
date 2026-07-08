@@ -14,7 +14,7 @@
     "dev:ui": "pnpm --filter @paperclipai/ui dev",
     "storybook": "pnpm --filter @paperclipai/ui storybook",
     "build-storybook": "pnpm --filter @paperclipai/ui build-storybook",
-    "build": "node scripts/apply-sink-dink-direct-gemini-route.mjs && node scripts/apply-sink-dink-model-router-ui.mjs && pnpm run preflight:workspace-links && pnpm -r build",
+    "build": "node scripts/apply-sink-dink-model-router-ui.mjs && pnpm run preflight:workspace-links && pnpm -r build",
     "typecheck": "pnpm run preflight:workspace-links && pnpm -r typecheck",
     "typecheck:build-gaps": "pnpm run preflight:workspace-links && node scripts/run-typecheck-build-gaps.mjs",
     "test": "pnpm run test:run",
